@@ -1,0 +1,4 @@
+target
+.idea
+analysis.txt
+src/main/resources/AwsCredentials.properties

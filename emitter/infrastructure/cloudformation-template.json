@@ -1,0 +1,564 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Event Processing Java Emitter",
+  "Parameters": {
+    "KeyName": {
+      "Type": "String",
+      "Default": "laptop",
+      "Description": "Key Name"
+    },
+    "VpcId": {
+      "Type": "String",
+      "Default": "vpc-f3f95896",
+      "Description": "VPC Id"
+    },
+    "StudentUsername1": {
+      "Type": "String",
+      "Default": "StudentUser1",
+      "Description": "Student Username"
+    },
+    "StudentUsername2": {
+      "Type": "String",
+      "Default": "StudentUser2",
+      "Description": "Student Username"
+    },
+    "StudentUsername3": {
+      "Type": "String",
+      "Default": "StudentUser3",
+      "Description": "Student Username"
+    },
+    "StudentUsername4": {
+      "Type": "String",
+      "Default": "StudentUser4",
+      "Description": "Student Username"
+    },
+    "StudentUsername5": {
+      "Type": "String",
+      "Default": "StudentUser5",
+      "Description": "Student Username"
+    },
+    "StudentUsername6": {
+      "Type": "String",
+      "Default": "StudentUser6",
+      "Description": "Student Username"
+    },
+    "StudentUsername7": {
+      "Type": "String",
+      "Default": "StudentUser7",
+      "Description": "Student Username"
+    }
+  },
+  "Resources": {
+    "iamEmitterRolePolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "iamEmitterRolePolicy",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "accessS3Bucket",
+              "Effect": "Allow",
+              "Action": [
+                "s3:PutObject"
+              ],
+              "Resource": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "locationsS3Bucket",
+                        "Arn"
+                      ]
+                    },
+                    "*"
+                  ]
+                ]
+              }
+            },
+            {
+              "Sid": "sns",
+              "Effect": "Allow",
+              "Action": [
+                "sns:Publish",
+                "sns:Unsubscribe",
+                "sns:ListSubscriptionsByTopic"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "sqs",
+              "Effect": "Allow",
+              "Action": [
+                "sqs:GetQueueUrl",
+                "sqs:DeleteQueue",
+                "sqs:GetQueueAttributes"
+              ],
+              "Resource": "*"
+            }
+          ]
+        },
+        "Roles": [
+          {
+            "Ref": "iamEmitterRole"
+          }
+        ]
+      }
+    },
+    "iamEmitterRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "iamInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "iamEmitterRole"
+          }
+        ],
+        "InstanceProfileName": "iamInstanceProfile"
+      }
+    },
+    "ec2Instance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "IamInstanceProfile": {
+          "Ref": "iamInstanceProfile"
+        },
+        "ImageId": "ami-d834aba1",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": 0,
+            "GroupSet": [
+              {
+                "Ref": "ec2SecurityGroup"
+              }
+            ],
+            "AssociatePublicIpAddress": "true"
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "yum install -y aws-cfn-bootstrap\n",
+                "# Install the files and packages from the metadata\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource ec2Instance ",
+                "         --configsets InstallAndRun ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "Metadata": {
+        "Comment1": "Install Java 8 and set as default",
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "InstallAndRun": [
+              "Install",
+              "Configure"
+            ]
+          },
+          "Install": {
+            "packages": {
+              "yum": {
+                "java-1.8.0-openjdk": {}
+              }
+            }
+          },
+          "Configure": {
+            "commands": {
+              "01_set_java8_as_default": {
+                "command": "sudo alternatives --set java /usr/lib/jvm/jre-1.8.0-openjdk.x86_64/bin/java"
+              }
+            }
+          }
+        }
+      }
+    },
+    "locationsS3Bucket": {
+      "Type": "AWS::S3::Bucket"
+    },
+    "snsTopicSensorDataPart1": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": "EventProcessing-SensorData-Part1",
+        "Subscription": [
+          {
+            "Endpoint": "arn:aws:sqs:eu-west-1:341852653344:Q1",
+            "Protocol": "sqs"
+          }
+        ]
+      }
+    },
+    "snsTopicSensorDataPart2": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": "EventProcessing-SensorData-Part2",
+        "Subscription": [
+          {
+            "Endpoint": "arn:aws:sqs:eu-west-1:341852653344:Q1",
+            "Protocol": "sqs"
+          }
+        ]
+      }
+    },
+    "ec2SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "EventProcessing EC2 Security Group",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "sqsQueueExampleQueuePart1": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "ExampleQueue-Part1",
+        "MessageRetentionPeriod": 86400
+      }
+    },
+    "sqsQueueExampleQueuePart2": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "ExampleQueue-Part2",
+        "MessageRetentionPeriod": 86400
+      }
+    },
+    "sqsQueueSubscriptionExampleQueuePart1": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "sqsQueueExampleQueuePart1",
+            "Arn"
+          ]
+        },
+        "Protocol": "sqs",
+        "TopicArn": {
+          "Ref": "snsTopicSensorDataPart1"
+        }
+      }
+    },
+    "sqsQueueSubscriptionExampleQueuePart2": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "sqsQueueExampleQueuePart2",
+            "Arn"
+          ]
+        },
+        "Protocol": "sqs",
+        "TopicArn": {
+          "Ref": "snsTopicSensorDataPart2"
+        }
+      }
+    },
+    "sqsQueuePolicyExampleQueuePart1": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Id": "AllowEventProcessingSnsTopicToPublish",
+          "Statement": [
+            {
+              "Sid": "1",
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": [
+                "sqs:SendMessage"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "snsTopicSensorDataPart1"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Queues": [
+          {
+            "Ref": "sqsQueueExampleQueuePart1"
+          }
+        ]
+      }
+    },
+    "sqsQueuePolicyExampleQueuePart2": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Id": "AllowEventProcessingSnsTopicToPublish",
+          "Statement": [
+            {
+              "Sid": "1",
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": [
+                "sqs:SendMessage"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "snsTopicSensorDataPart2"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Queues": [
+          {
+            "Ref": "sqsQueueExampleQueuePart2"
+          }
+        ]
+      }
+    },
+    "iamGroupStudents": {
+      "Type": "AWS::IAM::Group",
+      "Properties": {
+        "GroupName": "StudentsGroup",
+        "Policies": [
+          {
+            "PolicyName": "StudentsGroupInlinePolicy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "SubAndUnsubToTopics",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:Subscribe",
+                    "sns:Unsubscribe"
+                  ],
+                  "Resource": [
+                    {
+                      "Ref": "snsTopicSensorDataPart1"
+                    },
+                    {
+                      "Ref": "snsTopicSensorDataPart2"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "AllQueueOperations",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:*"
+                  ],
+                  "Resource": [
+                    "*"
+                  ]
+                },
+                {
+                  "Sid": "S3ReadAccess",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "/",
+                        [
+                          {
+                            "Fn::GetAtt": [
+                              "locationsS3Bucket",
+                              "Arn"
+                            ]
+                          },
+                          "*"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "iamUserStudent1": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Groups": [
+          {
+            "Ref": "iamGroupStudents"
+          }
+        ],
+        "UserName": {
+          "Ref": "StudentUsername1"
+        }
+      }
+    },
+    "iamUserStudent2": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Groups": [
+          {
+            "Ref": "iamGroupStudents"
+          }
+        ],
+        "UserName": {
+          "Ref": "StudentUsername2"
+        }
+      }
+    },
+    "iamUserStudent3": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Groups": [
+          {
+            "Ref": "iamGroupStudents"
+          }
+        ],
+        "UserName": {
+          "Ref": "StudentUsername3"
+        }
+      }
+    },
+    "iamUserStudent4": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Groups": [
+          {
+            "Ref": "iamGroupStudents"
+          }
+        ],
+        "UserName": {
+          "Ref": "StudentUsername4"
+        }
+      }
+    },
+    "iamUserStudent5": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Groups": [
+          {
+            "Ref": "iamGroupStudents"
+          }
+        ],
+        "UserName": {
+          "Ref": "StudentUsername5"
+        }
+      }
+    },
+    "iamUserStudent6": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Groups": [
+          {
+            "Ref": "iamGroupStudents"
+          }
+        ],
+        "UserName": {
+          "Ref": "StudentUsername6"
+        }
+      }
+    },
+    "iamUserStudent7": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Groups": [
+          {
+            "Ref": "iamGroupStudents"
+          }
+        ],
+        "UserName": {
+          "Ref": "StudentUsername7"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "EmitterTopicArnPart1": {
+      "Description": "Emitter Topic ARN for Part 1",
+      "Value": {
+        "Ref": "snsTopicSensorDataPart1"
+      },
+      "Export": {
+        "Name": "EmitterTopicArn-Part1"
+      }
+    },
+    "EmitterTopicArnPart2": {
+      "Description": "Emitter Topic ARN for Part 1",
+      "Value": {
+        "Ref": "snsTopicSensorDataPart2"
+      },
+      "Export": {
+        "Name": "EmitterTopicArn-Part2"
+      }
+    },
+    "EmitterPublicDNS": {
+      "Description": "Emitter Public DNS",
+      "Value": {
+        "Fn::GetAtt": [
+          "ec2Instance",
+          "PublicDnsName"
+        ]
+      },
+      "Export": {
+        "Name": "EmitterPublicDNS"
+      }
+    },
+    "LocationsS3Bucket": {
+      "Description": "Locations S3 Bucket",
+      "Value": {
+        "Ref": "locationsS3Bucket"
+      },
+      "Export": {
+        "Name": "LocationsS3Bucket"
+      }
+    }
+  }
+}
