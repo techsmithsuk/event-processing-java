@@ -1,90 +1,103 @@
 package org.softwire.training.analyzer.receiver;
 
-import com.amazonaws.services.sqs.AmazonSQS;
-import com.amazonaws.services.sqs.model.DeleteMessageBatchRequestEntry;
-import com.amazonaws.services.sqs.model.DeleteMessageBatchResult;
-import com.amazonaws.services.sqs.model.Message;
-import com.amazonaws.services.sqs.model.ReceiveMessageRequest;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Streams;
 import com.typesafe.config.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.softwire.training.analyzer.model.Event;
 
-import java.io.IOException;
 import java.util.List;
-import java.util.Map;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
-public class Receiver {
+/**
+ * This class wraps all the threaded aspects of the receiver.
+ * <p>
+ * We spin up {@link TypedConfig#numThreads} polling loops, each of which uses {@link SqsEventRetriever#get()} to
+ * retrieve events from SQS and puts them into the outboundQueue.  If any thread encounters an error then it's logged
+ * and fatalErrorInThread is set, and then next call to {@link #get()} will throw.
+ * <p>
+ * It's safe to use a single instance of {@link SqsEventRetriever} as it's thread-safe.
+ * <p>
+ * Instead of managing the threads ourselves, an alternative solution would be to use some kinda of ExecutorService, as
+ * we do in the SNS publisher in the emitter.
+ */
+public class Receiver implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(Receiver.class);
-    private final AmazonSQS sqs;
-    private final String queueUrl;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final AtomicReference<Throwable> fatalErrorInThread = new AtomicReference<>();
+    private final AtomicBoolean threadShutdownRequested = new AtomicBoolean(false);
+    private final LinkedBlockingQueue<Event> outboundQueue = new LinkedBlockingQueue<>();
 
-    public Receiver(AmazonSQS sqs,
-                    String queueUrl) {
-        this.sqs = sqs;
-        this.queueUrl = queueUrl;
+    private final SqsEventRetriever sqsEventRetriever;
+    private final List<Thread> threads;
+
+    public Receiver(SqsEventRetriever sqsEventRetriever,
+                    Receiver.TypedConfig config) {
+        this.sqsEventRetriever = sqsEventRetriever;
+
+        threads = IntStream.range(0, config.numThreads).mapToObj(i -> {
+            Thread thread = new Thread(this::runPollingLoop, "Receiver Thread " + i);
+            thread.start();
+            return thread;
+        }).collect(Collectors.toList());
     }
 
-    public Stream<Event> get() {
-        ReceiveMessageRequest request = new ReceiveMessageRequest(queueUrl).withWaitTimeSeconds(1);
-        List<Message> messages = sqs.receiveMessage(request).getMessages();
-        LOG.debug("Received {} messages", messages.size());
-        deleteFromQueueSwallowingErrors(messages);
-        return messages.stream().flatMap(this::parseMessageSwallowingErrors);
-    }
-
-    private Stream<Event> parseMessageSwallowingErrors(Message wrappedMessage) {
-        String wrappedMessageBody = wrappedMessage.getBody();
-        LOG.debug("Received message body: {}", wrappedMessageBody);
-        try {
-            // I'm surprised that there isn't a nice way of parsing the JSON envelope already in the AWS SDK, but I
-            // couldn't find one.
-            String messageBodyMessage = mapper.<Map<String, String>>readValue(
-                    wrappedMessageBody,
-                    new TypeReference<Map<String, String>>() {
-                    }
-            ).get("Message");
-            Event event = mapper.readValue(messageBodyMessage, Event.class);
-            LOG.debug("Decoded event: {}", event);
-            return Stream.of(event);
-        } catch (IOException e) {
-            LOG.warn("Failed to parse JSON, error: {} JSON was: {}", e, wrappedMessageBody);
-            return Stream.empty();
+    @Override
+    public void close() throws InterruptedException {
+        LOG.info("Shutting down worker threads");
+        threads.forEach(Thread::interrupt);
+        for (Thread thread : threads) {
+            thread.join();
         }
     }
 
-    private void deleteFromQueueSwallowingErrors(List<Message> messages) {
-        if (messages.size() > 0) {
-            List<DeleteMessageBatchRequestEntry> deleteMessageBatchRequestEntries = Streams.zip(
-                    messages.stream(),
-                    IntStream.range(0, messages.size()).boxed(), (message, i) ->
-                            new DeleteMessageBatchRequestEntry(Integer.toString(i), message.getReceiptHandle())
-            ).collect(Collectors.toList());
-            LOG.debug("Deleting messages with request {}", deleteMessageBatchRequestEntries);
-            DeleteMessageBatchResult deleteMessageBatchResult = sqs.deleteMessageBatch(queueUrl, deleteMessageBatchRequestEntries);
-            deleteMessageBatchResult.getFailed().forEach(batchResultErrorEntry ->
-                    LOG.warn("Failed to delete SQS message: {}", batchResultErrorEntry));
-            LOG.debug("Message deletion complete");
+    public Stream<Event> get() throws InterruptedException {
+        Event event = outboundQueue.poll(1, TimeUnit.SECONDS);
+        if (fatalErrorInThread.get() != null) {
+            throw new FatalErrorInWorkerThreadException(fatalErrorInThread.get());
+        }
+        return event == null ? Stream.empty() : Stream.of(event);
+    }
+
+    private void runPollingLoop() {
+        try {
+            while (true) {
+                sqsEventRetriever.get().forEach(outboundQueue::add);
+                if (threadShutdownRequested.get()) {
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            // If fatalErrorInThread is unset, set it.  If it is already set then don't worry about it.
+            fatalErrorInThread.compareAndSet(null, t);
+            LOG.error("Thread shutdown unexpectedly", t);
+        }
+    }
+
+    class FatalErrorInWorkerThreadException extends RuntimeException {
+        FatalErrorInWorkerThreadException(Throwable cause) {
+            super(cause);
         }
     }
 
     public static class TypedConfig {
         final String topicArn;
+        final int numThreads;
 
-        public TypedConfig(String topicArn) {
+        public TypedConfig(String topicArn, int numThreads) {
             this.topicArn = topicArn;
+            this.numThreads = numThreads;
         }
 
-        public static TypedConfig fromUntypedConfig(Config config) {
-            return new TypedConfig(config.getString("snsTopicArn"));
+        public static TypedConfig fromUntypedConfig(Config typesafeConfig) {
+            return new TypedConfig(
+                    typesafeConfig.getString("snsTopicArn"),
+                    typesafeConfig.getInt("numThreads"));
         }
     }
 }

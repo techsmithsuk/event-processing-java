@@ -2,44 +2,55 @@ package org.softwire.training.analyzer.pipeline;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.stubbing.Answer;
 import org.softwire.training.analyzer.builders.EventBuilder;
-import org.softwire.training.analyzer.model.Average;
+import org.softwire.training.analyzer.model.ChronologicalAverage;
 import org.softwire.training.analyzer.model.Event;
+import org.softwire.training.analyzer.services.FileWriter;
+import org.softwire.training.analyzer.services.Marshaller;
 
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Matchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-class AggregatorTest {
+class ChronologicalAggregatorTest {
     private static final int EXPIRY_SECONDS = 30;
     private static final int AVERAGING_PERIOD_SECONDS = 10;
-    private static final Aggregator.TypedConfig CONFIG = new Aggregator.TypedConfig(
+    private static final ChronologicalAggregator.TypedConfig CONFIG = new ChronologicalAggregator.TypedConfig(
             Duration.ofSeconds(AVERAGING_PERIOD_SECONDS),
-            Duration.ofSeconds(EXPIRY_SECONDS));
+            Duration.ofSeconds(EXPIRY_SECONDS),
+            "filename");
     private static final Instant START = Instant.EPOCH.plus(Duration.ofSeconds(100));
 
     private Clock clock;
     private AggregatorWrapper aggregator;
 
+    private static ChronologicalAverage buildAverage(int fromSeconds, double value) {
+        return new ChronologicalAverage(
+                START.plusSeconds(fromSeconds),
+                START.plusSeconds(fromSeconds + AVERAGING_PERIOD_SECONDS),
+                value);
+    }
+
     @BeforeEach
-    void beforeEach() {
+    void beforeEach() throws IOException {
         clock = mock(Clock.class);
         when(clock.instant()).thenReturn(START);
-
-        aggregator = new AggregatorWrapper(new Aggregator(CONFIG, clock
-        ));
+        aggregator = new AggregatorWrapper(clock);
     }
 
     @Test
@@ -103,7 +114,7 @@ class AggregatorTest {
 
     @Test
     void dropMessageWhichIsMoreThanOneAveragingPeriodInTheFuture() {
-        aggregator.sendEvent(0,   2 * AVERAGING_PERIOD_SECONDS, 3);
+        aggregator.sendEvent(0, 2 * AVERAGING_PERIOD_SECONDS, 3);
 
         assertThat(aggregator.expireAndGetAverages(), equalTo(emptyList()));
     }
@@ -116,39 +127,54 @@ class AggregatorTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void refuseToRunNearTheEpoch() {
         when(clock.instant()).thenReturn(Instant.EPOCH);
 
-        assertThrows(IllegalStateException.class, () -> new Aggregator(CONFIG, clock));
+        assertThrows(IllegalStateException.class, () -> new ChronologicalAggregator(
+                CONFIG,
+                clock,
+                mock(FileWriter.Factory.class),
+                (Marshaller<ChronologicalAverage>) mock(Marshaller.class))
+        );
     }
 
     @Test
     void rejectsConfigWhereAveragingPeriodDoesntDivideExpiry() {
         assertThrows(IllegalArgumentException.class,
-                () -> new Aggregator.TypedConfig(Duration.ofSeconds(2), Duration.ofSeconds(1)));
+                () -> new ChronologicalAggregator.TypedConfig(Duration.ofSeconds(2), Duration.ofSeconds(1), "filename"));
     }
 
     @Test
     void rejectsConfigWhereAveragingPeriodHasNanos() {
         assertThrows(IllegalArgumentException.class,
-                () -> new Aggregator.TypedConfig(Duration.ofSeconds(1).plusNanos(1), Duration.ofSeconds(1)));
-    }
-
-    private static Average buildAverage(int fromSeconds, double value) {
-        return new Average(
-                START.plusSeconds(fromSeconds),
-                START.plusSeconds(fromSeconds + AVERAGING_PERIOD_SECONDS),
-                value);
+                () -> new ChronologicalAggregator.TypedConfig(Duration.ofSeconds(1).plusNanos(1), Duration.ofSeconds(1), "filename"));
     }
 
     private static class AggregatorWrapper {
-        private final Aggregator aggregator;
-        private final List<Average> averages;
+        private final ChronologicalAggregator aggregator;
+        private final List<ChronologicalAverage> averages;
         private int lastNowSeconds = 0;
 
-        AggregatorWrapper(Aggregator aggregator) {
-            this.aggregator = aggregator;
+        @SuppressWarnings("unchecked")
+        AggregatorWrapper(Clock clock) throws IOException {
             averages = new ArrayList<>();
+
+            FileWriter.Factory filewriterFactory = mock(FileWriter.Factory.class);
+            FileWriter<ChronologicalAverage> fileWriter = (FileWriter<ChronologicalAverage>) mock(FileWriter.class);
+            when(filewriterFactory.<ChronologicalAverage>get(any(), any())).thenReturn(fileWriter);
+
+            doAnswer((Answer<Void>) invocation -> {
+                averages.add((ChronologicalAverage) invocation.getArguments()[0]);
+                return null;
+            }).when(fileWriter).write(any());
+
+            aggregator = new ChronologicalAggregator(
+                    CONFIG,
+                    clock,
+                    filewriterFactory,
+                    (Marshaller<ChronologicalAverage>) mock(Marshaller.class)
+            );
         }
 
         void sendEvent(int nowSeconds, int eventTimestampSeconds, double eventValue) {
@@ -160,10 +186,10 @@ class AggregatorTest {
                     .setTimestamp(START.plusSeconds(eventTimestampSeconds).toEpochMilli())
                     .setValue(eventValue)
                     .createEvent();
-            averages.addAll(aggregator.handle(START.plusSeconds(nowSeconds), event).collect(Collectors.toList()));
+            aggregator.handle(START.plusSeconds(nowSeconds), event);
         }
 
-        List<Average> expireAndGetAverages() {
+        List<ChronologicalAverage> expireAndGetAverages() {
             // Force expiry
             int time = lastNowSeconds + 100 * EXPIRY_SECONDS;
             sendEvent(time, time, 0);

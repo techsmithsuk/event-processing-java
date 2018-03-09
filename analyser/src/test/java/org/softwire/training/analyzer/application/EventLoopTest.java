@@ -3,23 +3,16 @@ package org.softwire.training.analyzer.application;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.softwire.training.analyzer.builders.EventBuilder;
-import org.softwire.training.analyzer.model.Average;
 import org.softwire.training.analyzer.model.Event;
-import org.softwire.training.analyzer.pipeline.Aggregator;
-import org.softwire.training.analyzer.pipeline.Deduplicator;
-import org.softwire.training.analyzer.pipeline.LocationFilter;
 import org.softwire.training.analyzer.pipeline.Pipeline;
-import org.softwire.training.analyzer.pipeline.StatsCompiler;
-import org.softwire.training.analyzer.services.FileWriter;
-import org.softwire.training.analyzer.services.QueueInfoLogger;
+import org.softwire.training.analyzer.pipeline.Sink;
 import org.softwire.training.analyzer.receiver.Receiver;
 
 import java.time.*;
 import java.util.UUID;
 import java.util.stream.Stream;
 
-import static org.mockito.Matchers.any;
-import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -36,32 +29,29 @@ class EventLoopTest {
     private Receiver receiver;
     private Clock clock;
     private EventLoop eventLoop;
-    private FileWriter fileWriter;
-    private Pipeline<Event, Average> pipeline;
+    private Pipeline<Event, Event> pipeline;
+    private Sink<Event> sink;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
     void beforeEach() {
         receiver = mock(Receiver.class);
         clock = mock(Clock.class);
-        fileWriter = mock(FileWriter.class);
-        pipeline = (Pipeline<Event, Average>) mock(Pipeline.class);
-        QueueInfoLogger queueInfoLogger = mock(QueueInfoLogger.class);
-
+        pipeline = (Pipeline<Event, Event>) mock(Pipeline.class);
+        sink = (Sink<Event>) mock(Sink.class);
         // Start time is measured in the application constructor
         when(clock.instant()).thenReturn(START);
 
         eventLoop = new EventLoop(
                 CONFIG,
                 receiver,
-                queueInfoLogger,
                 pipeline,
-                fileWriter,
+                sink,
                 clock);
     }
 
     @Test
-    void returnImmediatelyOnceEnoughTimeHasElapsed() {
+    void returnImmediatelyOnceEnoughTimeHasElapsed() throws InterruptedException {
         when(receiver.get()).thenReturn(Stream.empty());
         when(clock.instant()).thenReturn(START.plus(CONFIG.duration).plusSeconds(1));
 
@@ -71,20 +61,18 @@ class EventLoopTest {
     }
 
     @Test
-    void passEventsThroughPipelineToFileWriter() {
+    void passEventsThroughPipelineToSink() throws InterruptedException {
         Instant tick1 = START.plusSeconds(1);
         Instant tick2 = START.plus(CONFIG.duration).plusSeconds(1);
         when(clock.instant()).thenReturn(tick1, tick2);
 
-        Event event = new EventBuilder().setEventId(UUID.randomUUID()).createEvent();
-        when(receiver.get()).thenReturn(Stream.of(event));
-
-        Average average = new Average(Instant.EPOCH, Instant.EPOCH, 1);
-        when(pipeline.handle(tick2, event)).thenReturn(Stream.of(average));
+        Event receivedEvent = new EventBuilder().setEventId(UUID.randomUUID()).createEvent();
+        Event processedEvent = new EventBuilder().setEventId(UUID.randomUUID()).createEvent();
+        when(receiver.get()).thenReturn(Stream.of(receivedEvent));
+        doReturn(Stream.of(processedEvent)).when(pipeline).handle(tick2, receivedEvent);
 
         eventLoop.run();
 
-        verify(fileWriter, times(1)).write(average);
+        verify(sink, times(1)).handle(tick2, processedEvent);
     }
-
 }

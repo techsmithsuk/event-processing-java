@@ -6,12 +6,12 @@ import com.google.common.base.Objects;
 import java.time.Instant;
 
 @SuppressWarnings("WeakerAccess")
-public class Average {
+public class ChronologicalAverage {
     public final Instant to;
     public final Instant from;
     public final double value;
 
-    public Average(Instant to, Instant from, double value) {
+    public ChronologicalAverage(Instant to, Instant from, double value) {
         this.to = to;
         this.from = from;
         this.value = value;
@@ -21,10 +21,10 @@ public class Average {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Average average = (Average) o;
-        return Double.compare(average.value, value) == 0 &&
-                Objects.equal(to, average.to) &&
-                Objects.equal(from, average.from);
+        ChronologicalAverage chronologicalAverage = (ChronologicalAverage) o;
+        return Double.compare(chronologicalAverage.value, value) == 0 &&
+                Objects.equal(to, chronologicalAverage.to) &&
+                Objects.equal(from, chronologicalAverage.from);
     }
 
     @Override

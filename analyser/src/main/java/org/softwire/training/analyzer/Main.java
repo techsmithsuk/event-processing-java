@@ -10,19 +10,26 @@ import org.slf4j.LoggerFactory;
 import org.softwire.training.analyzer.application.EventLoop;
 import org.softwire.training.analyzer.application.AwsClientFactory;
 import org.softwire.training.analyzer.application.TypedConfig;
-import org.softwire.training.analyzer.model.Average;
+import org.softwire.training.analyzer.model.ChronologicalAverage;
 import org.softwire.training.analyzer.model.Event;
 import org.softwire.training.analyzer.model.Location;
-import org.softwire.training.analyzer.pipeline.Aggregator;
+import org.softwire.training.analyzer.model.LocationAverage;
+import org.softwire.training.analyzer.pipeline.ChronologicalAggregator;
 import org.softwire.training.analyzer.pipeline.Deduplicator;
+import org.softwire.training.analyzer.pipeline.LocationAggregator;
 import org.softwire.training.analyzer.pipeline.LocationFilter;
 import org.softwire.training.analyzer.pipeline.Pipeline;
+import org.softwire.training.analyzer.pipeline.Sink;
 import org.softwire.training.analyzer.pipeline.StatsCompiler;
+import org.softwire.training.analyzer.services.ToStringMarshaller;
 import org.softwire.training.analyzer.services.FileWriter;
+import org.softwire.training.analyzer.services.LocationAverageMarshaller;
 import org.softwire.training.analyzer.services.LocationService;
+import org.softwire.training.analyzer.services.Marshaller;
 import org.softwire.training.analyzer.services.QueueInfoLogger;
 import org.softwire.training.analyzer.receiver.Receiver;
 import org.softwire.training.analyzer.receiver.QueueSubscription;
+import org.softwire.training.analyzer.receiver.SqsEventRetriever;
 
 import java.time.Clock;
 import java.util.List;
@@ -59,32 +66,43 @@ public class Main {
         AmazonSQS sqs = awsClientFactory.sqs();
         AmazonS3 s3 = awsClientFactory.s3();
 
+        FileWriter.Factory fileWriterFactory = new FileWriter.Factory();
+        Marshaller<List<LocationAverage>> locationAverageMarshaller = new LocationAverageMarshaller();
+        Marshaller<ChronologicalAverage> chronologicalAverageMarshaller = new ToStringMarshaller<>();
+
         Deduplicator deduplicator = new Deduplicator(config.deduplicator);
         List<Location> locations = new LocationService(config.locationService, s3, objectMapper).get();
         LocationFilter locationFilter = new LocationFilter(locations);
-        Aggregator aggregator = new Aggregator(config.aggregator, clock);
+
+        ChronologicalAggregator chronologicalAggregator = new ChronologicalAggregator(
+                config.chronologicalAggregator,
+                clock,
+                fileWriterFactory,
+                chronologicalAverageMarshaller);
+        LocationAggregator locationAggregator = new LocationAggregator(
+                config.locationAggregator,
+                locations,
+                fileWriterFactory,
+                locationAverageMarshaller
+        );
         StatsCompiler statsCompiler = new StatsCompiler(config.application);
-        FileWriter fileWriter = new FileWriter(config.fileWriter);
 
         try (QueueSubscription queueSubscription = new QueueSubscription(sqs, sns, config.receiver)) {
+            try (QueueInfoLogger ignored = new QueueInfoLogger(sqs, queueSubscription.getQueueUrl())) {
+                SqsEventRetriever sqsEventRetriever = new SqsEventRetriever(sqs, queueSubscription.getQueueUrl());
+                Receiver receiver = new Receiver(sqsEventRetriever, config.receiver);
 
-            Receiver receiver = new Receiver(sqs, queueSubscription.getQueueUrl());
-            QueueInfoLogger queueInfoLogger = new QueueInfoLogger(sqs, queueSubscription.getQueueUrl());
+                Pipeline<Event, Event> pipeline = statsCompiler.compose(locationFilter).compose(deduplicator);
+                Sink<Event> sink = Sink.parallel(chronologicalAggregator, locationAggregator);
 
-            Pipeline<Event, Average> pipeline = statsCompiler
-                    .compose(locationFilter)
-                    .compose(deduplicator)
-                    .compose(aggregator);
-
-            EventLoop eventLoop = new EventLoop(
-                    config.application,
-                    receiver,
-                    queueInfoLogger,
-                    pipeline,
-                    fileWriter,
-                    clock);
-            eventLoop.run();
-
+                EventLoop eventLoop = new EventLoop(
+                        config.application,
+                        receiver,
+                        pipeline,
+                        sink,
+                        clock);
+                eventLoop.run();
+            }
         }
 
         statsCompiler.dumpStats();

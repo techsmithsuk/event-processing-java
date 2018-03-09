@@ -3,9 +3,12 @@ package org.softwire.training.analyzer.pipeline;
 import com.typesafe.config.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.softwire.training.analyzer.model.Average;
+import org.softwire.training.analyzer.model.ChronologicalAverage;
 import org.softwire.training.analyzer.model.Event;
+import org.softwire.training.analyzer.services.FileWriter;
+import org.softwire.training.analyzer.services.Marshaller;
 
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,7 +23,7 @@ import java.util.stream.Stream;
  * Aggregates received events by time, computing averages every config.averagingPeriod.
  * Events may be late by as much as expiryTime and early by as much as averagingPeriod.
  * <p>
- * Aggregator keeps track of n+1 buckets where n = expiryTime / averagingPeriod
+ * ChronologicalAggregator keeps track of n+1 buckets where n = expiryTime / averagingPeriod
  * <p>
  * Let's say expiryTime = 10s and averagingPeriod = 1s, at 12:00:30:123, the situation is:
  * <p>
@@ -60,20 +63,25 @@ import java.util.stream.Stream;
  * On the other hand the current implementation is more direct and possibly more
  * efficient.  We don't recommend one solution over the other.
  */
-public class Aggregator implements Pipeline<Event, Average> {
-    private static final Logger LOG = LoggerFactory.getLogger(Aggregator.class);
+public class ChronologicalAggregator implements Sink<Event> {
+    private static final Logger LOG = LoggerFactory.getLogger(ChronologicalAggregator.class);
 
     private final TypedConfig config;
 
     private final LinkedList<Bucket> buckets;
+    private final FileWriter<ChronologicalAverage> fileWriter;
 
     // Keep track of all these to avoid recalculating for every event received.
     private long firstBucketStart;
     private long lastBucketStart;
     private long lastBucketEnd;
 
-    public Aggregator(TypedConfig config, Clock clock) {
+    public ChronologicalAggregator(TypedConfig config,
+                                   Clock clock,
+                                   FileWriter.Factory fileWriterFactory,
+                                   Marshaller<ChronologicalAverage> marshaller) throws IOException {
         this.config = config;
+        this.fileWriter = fileWriterFactory.get(config.filename, marshaller);
 
         final long now = clock.instant().toEpochMilli();
         if (now < config.expiryTime) {
@@ -96,17 +104,16 @@ public class Aggregator implements Pipeline<Event, Average> {
     }
 
     @Override
-    public Stream<Average> handle(Instant now, Event event) {
-        Stream<Average> result = expireBuckets(now);
+    public void handle(Instant now, Event event) {
+        expireBuckets(now).forEach(fileWriter::write);
         getBucketOffset(event.timestamp)
                 .ifPresent(offset -> buckets.get(offset).add(event.value));
-        return result;
     }
 
-    private Stream<Average> expireBuckets(Instant now) {
+    private Stream<ChronologicalAverage> expireBuckets(Instant now) {
         long nowMillis = now.toEpochMilli();
 
-        Stream<Average> result = Stream.empty();
+        Stream<ChronologicalAverage> result = Stream.empty();
         while (nowMillis >= lastBucketStart) {
             result = Stream.concat(result, buckets.removeFirst().average());
 
@@ -149,11 +156,11 @@ public class Aggregator implements Pipeline<Event, Average> {
             values.add(value);
         }
 
-        Stream<Average> average() {
+        Stream<ChronologicalAverage> average() {
             OptionalDouble average = values.stream().mapToDouble(i -> i).average();
             // OptionalDouble doesn't have a map method!
             if (average.isPresent() && !suppressOutput) {
-                return Stream.of(new Average(
+                return Stream.of(new ChronologicalAverage(
                         Instant.ofEpochMilli(from),
                         Instant.ofEpochMilli(to),
                         average.getAsDouble()));
@@ -165,20 +172,22 @@ public class Aggregator implements Pipeline<Event, Average> {
     public static class TypedConfig {
         final long averagingPeriod;
         final long expiryTime;
+        final String filename;
 
         final int numberOfBuckets;
 
-        public TypedConfig(Duration averagingPeriod, Duration expiryTime) {
+        public TypedConfig(Duration averagingPeriod, Duration expiryTime, String filename) {
             if (averagingPeriod.getNano() != 0 || expiryTime.getNano() != 0) {
                 throw new IllegalArgumentException("averagingPeriod and expiryTime must be a whole number of milliseconds");
             }
 
             if (expiryTime.toMillis() % averagingPeriod.toMillis() != 0) {
-                throw new IllegalArgumentException("Aggregator averagingPeriod must divide evenly into expiryTime");
+                throw new IllegalArgumentException("ChronologicalAggregator averagingPeriod must divide evenly into expiryTime");
             }
 
             this.averagingPeriod = averagingPeriod.toMillis();
             this.expiryTime = expiryTime.toMillis();
+            this.filename = filename;
 
             numberOfBuckets = (int) (this.expiryTime / this.averagingPeriod) + 2;
         }
@@ -186,7 +195,8 @@ public class Aggregator implements Pipeline<Event, Average> {
         static public TypedConfig fromUntypedConfig(Config config) {
             return new TypedConfig(
                     config.getDuration("averagingPeriod"),
-                    config.getDuration("expiryTime"));
+                    config.getDuration("expiryTime"),
+                    config.getString("filename"));
         }
     }
 }

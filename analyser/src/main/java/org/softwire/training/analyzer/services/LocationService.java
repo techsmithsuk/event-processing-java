@@ -18,7 +18,7 @@ public class LocationService {
 
     private final TypedConfig config;
     private final AmazonS3 s3;
-    private ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
 
     public LocationService(TypedConfig config, AmazonS3 s3, ObjectMapper objectMapper) {
         this.config = config;
