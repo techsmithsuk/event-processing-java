@@ -3,6 +3,10 @@ Emitter
 
 # Deployment
 
+### Set the AWS Region
+
+In the region drop-down in the top right, select EU (Ireland).
+
 ### Create an Access Key
 * `AWS` -> `Services` -> `EC2` -> `Key Pairs` -> `Create Key Pair`
 
