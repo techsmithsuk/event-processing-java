@@ -88,6 +88,7 @@ public class SnsTopic implements Consumer {
 
         private static final int MAX_ALLOWED_MESSAGES_IN_QUEUE = 1000;
         private static final int REAPER_PERIOD_MINUTES = 5;
+        private static final String PENDING_CONFIRMATION = "PendingConfirmation";
 
         private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         private final AmazonSNS sns;
@@ -122,6 +123,8 @@ public class SnsTopic implements Consumer {
                 Optional<String> queueUrlO = extractSqsQueueName(subscription.getEndpoint()).flatMap(this::getQueueUrl);
                 if (queueUrlO.isPresent()) {
                     processQueue(subscription, queueUrlO.get());
+                } else if (subscription.getSubscriptionArn().equals(PENDING_CONFIRMATION)) {
+                    LOG.info("Not reaping subscription for endpoint {} because it is still pending", subscription.getEndpoint());
                 } else {
                     LOG.warn("Reaping subscription {} as the subscribed queue ({}) does not exist",
                             subscription.getSubscriptionArn(), subscription.getEndpoint());
