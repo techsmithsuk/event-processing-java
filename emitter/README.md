@@ -30,8 +30,8 @@ Emitter
 * Update `src/main/resources/part1.conf` with Outputs from previous section:
   * `s3Bucket = <LocationsS3Bucket>` 
   * `topicArn = <EmitterTopicArnPartPart1>`
-* Similarly, update `src/main/resources/part1.conf`:
-  * `s3Bucket = <LocationsS3Bucket>` 
+* Similarly, update `src/main/resources/part2.conf`:
+  * `s3Bucket = <LocationsS3Bucket>`
   * `topicArn = <EmitterTopicArnPartPart2>`
 
 ### Run the Emitter
