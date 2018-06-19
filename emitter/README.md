@@ -4,7 +4,7 @@ Emitter
 # Deployment
 
 ### Create an Access Key
-* `AWS` -> `Services` -> `Key Pairs` -> `Create Key Pair`
+* `AWS` -> `Services` -> `EC2` -> `Key Pairs` -> `Create Key Pair`
 
 ### Create Cloudformation Stacks
 * `AWS` -> `Services` -> `CloudFormation` 
