@@ -60,6 +60,15 @@ Go to `AWS` -> `Services` -> `SQS` -> `<Example Queue Name>`
 Messages available should be > 0 and increasing, you can also inspect the messages the 
 emitter is sending out.
 
+### Generate student keys
+
+Go to `AWS` -> `Services` -> `CloudFormation` -> `<Your Stack>` -> `Resources`
+
+For each student, click on their name in the resources list and go the `Security
+credentials` tab.
+
+Click `Create access key` and copy the keys or download the CSV.
+
 # Development
 
 To run locally without connecting to any AWS services (eg. for debugging), set 
