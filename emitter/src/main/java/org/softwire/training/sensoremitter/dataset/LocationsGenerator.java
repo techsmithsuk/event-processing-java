@@ -11,7 +11,7 @@ import java.util.Random;
 import java.util.Set;
 
 /**
- * Generates a set of random locations, making sure them they do not cluster too close to each other.
+ * Generates a set of random locations, making sure they do not cluster too close to each other.
  */
 public class LocationsGenerator {
     private final static Logger LOG = LoggerFactory.getLogger(LocationsGenerator.class);
