@@ -13,7 +13,7 @@ Event Processing - Example Client
 # Run
 
 ```
-mvn compile exec:java`
+mvn compile exec:java
 ```
 
 # Test
