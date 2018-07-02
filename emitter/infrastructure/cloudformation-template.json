@@ -217,25 +217,13 @@
     "snsTopicSensorDataPart1": {
       "Type": "AWS::SNS::Topic",
       "Properties": {
-        "DisplayName": "EventProcessing-SensorData-Part1",
-        "Subscription": [
-          {
-            "Endpoint": "arn:aws:sqs:eu-west-1:341852653344:Q1",
-            "Protocol": "sqs"
-          }
-        ]
+        "DisplayName": "EventProcessing-SensorData-Part1"
       }
     },
     "snsTopicSensorDataPart2": {
       "Type": "AWS::SNS::Topic",
       "Properties": {
-        "DisplayName": "EventProcessing-SensorData-Part2",
-        "Subscription": [
-          {
-            "Endpoint": "arn:aws:sqs:eu-west-1:341852653344:Q1",
-            "Protocol": "sqs"
-          }
-        ]
+        "DisplayName": "EventProcessing-SensorData-Part2"
       }
     },
     "ec2SecurityGroup": {
