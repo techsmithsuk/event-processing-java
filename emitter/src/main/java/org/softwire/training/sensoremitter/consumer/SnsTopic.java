@@ -1,6 +1,7 @@
 package org.softwire.training.sensoremitter.consumer;
 
 import com.amazonaws.services.sns.AmazonSNS;
+import com.amazonaws.services.sns.model.NotFoundException;
 import com.amazonaws.services.sns.model.PublishRequest;
 import com.amazonaws.services.sns.model.PublishResult;
 import com.amazonaws.services.sns.model.Subscription;
@@ -109,7 +110,7 @@ public class SnsTopic implements Consumer {
                 sns.listSubscriptionsByTopic(topicArn).getSubscriptions().forEach(subscription -> {
                     LOG.debug("Processing subscription: {} - {}",
                             subscription.getSubscriptionArn(), subscription.getEndpoint());
-                    processSubscription(subscription);
+                	processSubscription(subscription);
                 });
             } catch (Exception e) {
                 LOG.error("Reaper failed", e);
@@ -134,17 +135,21 @@ public class SnsTopic implements Consumer {
         }
 
         private void processQueue(Subscription subscription, String queueUrl) {
-            int approxNumMessages = Integer.parseInt(sqs.getQueueAttributes(
-                    queueUrl,
-                    Collections.singletonList("ApproximateNumberOfMessages")
-            ).getAttributes().get("ApproximateNumberOfMessages"));
-            LOG.debug("Queue {} has {} messages", queueUrl, approxNumMessages);
-            if (approxNumMessages > MAX_ALLOWED_MESSAGES_IN_QUEUE) {
-                LOG.warn("Reaping queue {}  as it has over {} messages ({})",
-                        queueUrl, MAX_ALLOWED_MESSAGES_IN_QUEUE, approxNumMessages);
-                sns.unsubscribe(subscription.getSubscriptionArn());
-                sqs.deleteQueue(queueUrl);
-            }
+        	try {
+	            int approxNumMessages = Integer.parseInt(sqs.getQueueAttributes(
+	                queueUrl,
+	                Collections.singletonList("ApproximateNumberOfMessages")
+	            ).getAttributes().get("ApproximateNumberOfMessages"));
+	            LOG.debug("Queue {} has {} messages", queueUrl, approxNumMessages);
+	            if (approxNumMessages > MAX_ALLOWED_MESSAGES_IN_QUEUE) {
+	                LOG.warn("Reaping queue {}  as it has over {} messages ({})",
+	                    queueUrl, MAX_ALLOWED_MESSAGES_IN_QUEUE, approxNumMessages);
+	                sns.unsubscribe(subscription.getSubscriptionArn());
+	                sqs.deleteQueue(queueUrl);
+	            }
+        	} catch (QueueDoesNotExistException | NotFoundException e) {
+        		LOG.error("Queue {} not found", queueUrl);
+        	}
         }
 
         private Optional<String> getQueueUrl(String queueName) {
